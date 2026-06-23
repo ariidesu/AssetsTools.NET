@@ -73,7 +73,7 @@ namespace AssetsTools.NET.Extra
 
         private static readonly Dictionary<string, string> baseToPrimitive = new Dictionary<string, string>()
         {
-            ["System.Boolean"] = "UInt8", // keep this UInt8! this is the official conversion despite bool existing
+            ["System.Boolean"] = "bool",
             ["System.SByte"] = "SInt8",
             ["System.Byte"] = "UInt8",
             ["System.Char"] = "UInt16",
@@ -173,7 +173,14 @@ namespace AssetsTools.NET.Extra
 
         public static AssetTypeTemplateField VectorWithType(AssetTypeTemplateField field)
         {
-            return CreateTemplateField(field.Name, field.Type, Array(field));
+            // Use "vector" as the wrapper type instead of field.Type.
+            // When the wrapper type is a complex type name (e.g. "Item"),
+            // Unity's serialization inserts a 4-byte type hash before the
+            // array size, which the type tree doesn't account for.
+            // Using "vector" avoids the type hash and keeps the array format
+            // as simple size+data. The element type information is preserved
+            // in the "data" node's children.
+            return CreateTemplateField(field.Name, "vector", Array(field));
         }
 
         public static List<AssetTypeTemplateField> Array(AssetTypeTemplateField field)

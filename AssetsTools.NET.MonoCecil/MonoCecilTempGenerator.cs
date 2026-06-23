@@ -280,7 +280,9 @@ namespace AssetsTools.NET.Extra
                     if (!Net35Polyfill.HasFlag(f.Attributes, FieldAttributes.Static) &&
                         !Net35Polyfill.HasFlag(f.Attributes, FieldAttributes.NotSerialized) &&
                         !f.IsInitOnly &&
-                        !f.HasConstant) // field is not public, has exception attribute, readonly, or const
+                        !f.HasConstant &&
+                        !f.IsSpecialName &&
+                        !f.IsRuntimeSpecialName) // field is not static, notserialized, readonly, const, or compiler-generated
                     {
                         TypeDefWithSelfRef solidifiedFieldType = parentType.SolidifyType(f.FieldType);
 

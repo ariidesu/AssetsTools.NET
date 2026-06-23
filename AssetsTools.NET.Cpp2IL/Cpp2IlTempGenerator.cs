@@ -153,7 +153,7 @@ namespace AssetsTools.NET.Cpp2IL
             Il2CppCustomAttributeDataRange attributeDataRange = metadata.AttributeDataRanges[caIndex];
             Il2CppCustomAttributeDataRange next = metadata.AttributeDataRanges[caIndex + 1];
 
-            long attributeDataOffset = metadata.metadataHeader.attributeData.Offset;
+            long attributeDataOffset = metadata.metadataHeader.attributeDataOffset;
             long blobStart = attributeDataOffset + attributeDataRange.startOffset;
             long blobEnd = attributeDataOffset + next.startOffset;
 
@@ -181,10 +181,10 @@ namespace AssetsTools.NET.Cpp2IL
                     var attrCtorMethod = metadata.methodDefs[attrIdx];
 
                     var attrCtorMethodTypeIdx = attrCtorMethod.declaringTypeIdx;
-                    if (attrCtorMethodTypeIdx.IsNull)
+                    if (attrCtorMethodTypeIdx < 0)
                         continue;
 
-                    var attrType = metadata.typeDefs[attrCtorMethodTypeIdx.Value];
+                    var attrType = metadata.typeDefs[attrCtorMethodTypeIdx];
                     attributeNames.Add(attrType.FullName);
                 }
 
@@ -203,7 +203,7 @@ namespace AssetsTools.NET.Cpp2IL
                 {
                     var attributeTypeIndex = metadata.attributeTypes[attributeTypeRange.start + attributeIdx];
                     var attributeTypeDef = metadata.typeDefs.FirstOrDefault(
-                        td => td.ByvalTypeIndex.IsNonNull && td.ByvalTypeIndex.Value == attributeTypeIndex);
+                        td => td.ByvalTypeIndex != 0 && td.ByvalTypeIndex == attributeTypeIndex);
 
                     if (attributeTypeDef != null)
                     {
@@ -357,6 +357,20 @@ namespace AssetsTools.NET.Cpp2IL
 
         private List<Il2CppFieldDefinition> GetAcceptableFields(TypeDefWithSelfRef parentType, int availableDepth)
         {
+            // Build set of property names for this type.
+            // LibCpp2IL normalizes auto-property backing fields (<X>k__BackingField -> X)
+            // and strips SpecialName/CompilerGenerated, making them look like regular fields.
+            // We filter them out unless they're explicitly marked for serialization.
+            HashSet<string> propertyNames = new HashSet<string>();
+            if (parentType.typeDef.Properties != null)
+            {
+                foreach (var prop in parentType.typeDef.Properties)
+                {
+                    if (!string.IsNullOrEmpty(prop.Name))
+                        propertyNames.Add(prop.Name);
+                }
+            }
+
             List<Il2CppFieldDefinition> validFields = new List<Il2CppFieldDefinition>();
             for (int i = 0; i < parentType.typeDef.FieldCount; i++)
             {
@@ -372,8 +386,24 @@ namespace AssetsTools.NET.Cpp2IL
                     if (!attr.HasFlag(FieldAttributes.Static) &&
                         !attr.HasFlag(FieldAttributes.NotSerialized) &&
                         !attr.HasFlag(FieldAttributes.InitOnly) &&
-                        !attr.HasFlag(FieldAttributes.Literal)) // field is not public, has exception attribute, readonly, or const
+                        !attr.HasFlag(FieldAttributes.Literal) &&
+                        !attr.HasFlag(FieldAttributes.SpecialName) &&
+                        !attr.HasFlag(FieldAttributes.RTSpecialName) &&
+                        !attributeNames.Contains("System.NonSerializedAttribute") &&
+                        !attributeNames.Contains("System.Runtime.CompilerServices.CompilerGeneratedAttribute")) // field is not static, notserialized, readonly, const, compiler-generated, or hidden
                     {
+                        // Filter out property backing fields normalized by LibCpp2IL
+                        // Auto-properties: public string Foo { get; set; } ->
+                        //   backing field <Foo>k__BackingField (private, SpecialName, CompilerGenerated)
+                        // LibCpp2IL normalizes this to: field "Foo" (public, NO SpecialName)
+                        // Unity never serializes these unless [field: SerializeField] is used
+                        if (propertyNames.Contains(f.Name) &&
+                            !attributeNames.Contains("UnityEngine.SerializeField") &&
+                            !attributeNames.Contains("UnityEngine.SerializeReference"))
+                        {
+                            continue;
+                        }
+
                         TypeDefWithSelfRef solidifiedFieldType = parentType.SolidifyType(f.FieldType);
 
                         if (TryGetListOrArrayElement(solidifiedFieldType, out Il2CppTypeReflectionData elemType))
